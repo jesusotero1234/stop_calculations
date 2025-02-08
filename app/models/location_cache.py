@@ -27,7 +27,7 @@ class LocationCache:
     async def get_by_name(cls, name: str, city: str) -> Optional['LocationCache']:
         """Retrieve a location from cache by name and city"""
         try:
-            result = await db.client.table('location_cache')\
+            result = await db.client.from_('location_cache')\
                 .select('*')\
                 .eq('original_name', name)\
                 .eq('city', city)\
@@ -46,7 +46,7 @@ class LocationCache:
     async def create(cls, data: Dict) -> Optional['LocationCache']:
         """Create a new cached location"""
         try:
-            result = await db.client.table('location_cache')\
+            result = await db.client.from_('location_cache')\
                 .insert(data)\
                 .execute()
             
@@ -64,7 +64,7 @@ class LocationCache:
             if not self.id:
                 return False
             
-            result = await db.client.table('location_cache')\
+            result = await db.client.from_('location_cache')\
                 .update({
                     'success_count': self.success_count + 1,
                     'last_validated': datetime.utcnow().isoformat()
@@ -92,7 +92,7 @@ class LocationCache:
         try:
             existing = await cls.get_by_name(name, city)
             if existing:
-                result = await db.client.table('location_cache')\
+                result = await db.client.from_('location_cache')\
                     .update({**data, 'updated_at': datetime.utcnow().isoformat()})\
                     .eq('id', existing.id)\
                     .execute()
@@ -108,10 +108,9 @@ class LocationCache:
     async def cleanup_old_entries(cls, days: int = 30, min_success: int = 5) -> int:
         """Clean up old cache entries"""
         try:
-            cutoff_date = (datetime.utcnow() - datetime.timedelta(days=days)).isoformat()
-            result = await db.client.table('location_cache')\
+            result = await db.client.from_('location_cache')\
                 .delete()\
-                .lt('last_validated', cutoff_date)\
+                .lt('last_validated', (datetime.utcnow() - datetime.timedelta(days=days)).isoformat())\
                 .lt('success_count', min_success)\
                 .execute()
             
@@ -120,18 +119,3 @@ class LocationCache:
         except Exception as e:
             logger.error(f"Error cleaning up old entries: {str(e)}")
             return 0
-
-    @classmethod
-    async def get_statistics(cls) -> Dict:
-        """Get cache statistics"""
-        try:
-            result = await db.client.rpc(
-                'get_cache_statistics',
-                {}
-            ).execute()
-            
-            return result.data[0] if result.data else {}
-
-        except Exception as e:
-            logger.error(f"Error getting cache statistics: {str(e)}")
-            return {}

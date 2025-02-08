@@ -15,8 +15,8 @@ Enhanced location validation service with caching and multi-language support.
 ### Prerequisites
 
 - Python 3.11+
-- Supabase account
-- PostgreSQL (for local development)
+- Supabase account and project
+- Environment variables configured
 
 ### Installation
 
@@ -45,11 +45,8 @@ cp .env.example .env
 # Edit .env with your Supabase credentials
 ```
 
-5. Run database migrations:
-```bash
-cd supabase
-supabase db push
-```
+5. Set up the database:
+See [DATABASE_SETUP.md](DATABASE_SETUP.md) for detailed instructions on setting up the Supabase database.
 
 ## Usage
 
@@ -86,7 +83,14 @@ The service automatically caches successful validations. Cached results include:
 ### Running Tests
 
 ```bash
-pytest tests/
+# Run all tests
+pytest
+
+# Run specific test file
+pytest tests/test_location_cache.py -v
+
+# Run with coverage
+pytest --cov=app tests/
 ```
 
 ### Adding New Features
@@ -151,6 +155,35 @@ table location_cache {
 2. Create your feature branch
 3. Add tests for new features
 4. Submit pull request
+
+## Environment Variables
+
+Required environment variables:
+```
+# API Configuration
+API_TITLE=Tour Generator
+API_VERSION=2.0.0
+API_PORT=8001
+API_HOST=0.0.0.0
+
+# Supabase Configuration
+SUPABASE_URL=your_project_url
+SUPABASE_KEY=your_anon_key
+SUPABASE_SERVICE_KEY=your_service_role_key
+
+# OpenStreetMap Configuration
+OSM_USER_AGENT=TourGenerator/1.0
+OSM_RATE_LIMIT=1.1
+
+# Cache Configuration
+CACHE_TTL=2592000  # 30 days in seconds
+CACHE_MIN_SUCCESS=5
+
+# Monitoring
+ENABLE_MONITORING=true
+PROMETHEUS_PORT=9090
+LOG_LEVEL=DEBUG
+```
 
 ## License
 

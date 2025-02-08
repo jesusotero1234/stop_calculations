@@ -1,145 +1,138 @@
-from prometheus_client import start_http_server, Summary, Counter, Histogram, Gauge
 import time
 import logging
-from typing import Any, Dict, Optional
-
-# Initialize static error counter to avoid duplicates
-error_counter = Counter(
-    'error_total',
-    'Total number of errors by type',
-    ['error_type']
-)
+from typing import Optional
+from prometheus_client import start_http_server, Histogram, Counter, CollectorRegistry
+import socket
 
 class MonitoringService:
-    def __init__(self, port: int = 9090):
-        self.logger = logging.getLogger(__name__)
-        
-        # General service metrics
-        self.service_latency = Histogram(
-            'service_request_latency_seconds',
-            'Time spent processing tour generation requests',
-            ['endpoint']
-        )
-        
-        self.request_counter = Counter(
-            'total_requests',
-            'Total number of requests received',
-            ['endpoint', 'status']
-        )
-        
-        # Llama metrics
-        self.llama_response_time = Histogram(
-            'llama_response_time_seconds',
-            'Time spent waiting for Llama responses',
-            ['operation']
-        )
-        self.llama_quality_score = Histogram(
-            'llama_response_quality',
-            'Quality scores for Llama responses',
-            ['type']
-        )
-        self.llama_success_rate = Counter(
-            'llama_requests_total',
-            'Number of Llama requests by status',
-            ['operation', 'status']
-        )
-        
-        # OpenStreetMap metrics
-        self.osm_response_time = Histogram(
-            'osm_response_time_seconds',
-            'Time spent waiting for OpenStreetMap responses'
-        )
-        self.osm_success_rate = Counter(
-            'osm_requests_total',
-            'Number of OpenStreetMap requests by status',
-            ['status']
-        )
-        self.osm_match_quality = Histogram(
-            'osm_match_quality',
-            'Quality of location matches from OpenStreetMap',
-            ['match_type']
-        )
-        
-        # Real-time gauges
-        self.active_requests = Gauge(
-            'active_requests',
-            'Number of requests currently being processed'
-        )
-        self.last_success_timestamp = Gauge(
-            'last_success_timestamp',
-            'Timestamp of last successful tour generation'
-        )
-        
-        # Start Prometheus HTTP server
-        try:
-            start_http_server(port)
-            self.logger.info(f"Monitoring server started on port {port}")
-        except Exception as e:
-            self.logger.error(f"Failed to start monitoring server: {str(e)}")
+    _instance: Optional['MonitoringService'] = None
+    _initialized: bool = False
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(MonitoringService, cls).__new__(cls)
+        return cls._instance
 
-    def record_llama_metrics(self, 
-                           operation: str,
-                           response_time: float,
-                           success: bool,
-                           quality_score: Optional[float] = None):
-        """Record comprehensive Llama metrics"""
-        try:
-            self.llama_response_time.labels(operation=operation).observe(response_time)
-            status = "success" if success else "error"
-            self.llama_success_rate.labels(operation=operation, status=status).inc()
+    def __init__(self):
+        """Initialize monitoring service with Prometheus metrics"""
+        if not self._initialized:
+            self.logger = logging.getLogger(__name__)
+            self.registry = CollectorRegistry()
             
-            if quality_score is not None:
-                self.llama_quality_score.labels(type=operation).observe(quality_score)
-                
-            self.logger.debug(f"Recorded Llama metrics - Operation: {operation}, Time: {response_time}, Success: {success}")
-        except Exception as e:
-            self.logger.error(f"Error recording Llama metrics: {str(e)}")
+            # Initialize metrics
+            self.service_latency = Histogram(
+                'service_request_latency_seconds',
+                'Service request latency in seconds',
+                ['service', 'endpoint'],
+                registry=self.registry
+            )
+            
+            self.osm_requests = Counter(
+                'osm_requests_total',
+                'Total OpenStreetMap API requests',
+                ['status'],
+                registry=self.registry
+            )
+            
+            self.cache_operations = Counter(
+                'cache_operations_total',
+                'Total cache operations',
+                ['operation', 'status'],
+                registry=self.registry
+            )
+            
+            self.validation_results = Counter(
+                'location_validation_results',
+                'Location validation results',
+                ['result', 'source'],
+                registry=self.registry
+            )
+            
+            # Try to start metrics server
+            try:
+                # Find available port
+                port = self._find_available_port(start_port=9090)
+                start_http_server(port, registry=self.registry)
+                self.logger.info(f"Monitoring server started on port {port}")
+            except Exception as e:
+                self.logger.error(f"Failed to start monitoring server: {str(e)}")
+            
+            self._initialized = True
 
-    def record_osm_metrics(self,
-                         response_time: float,
-                         success: bool,
-                         match_quality: Optional[float] = None,
-                         match_type: str = "exact"):
-        """Record comprehensive OpenStreetMap metrics"""
+    def _find_available_port(self, start_port: int = 9090, max_tries: int = 10) -> int:
+        """Find an available port starting from start_port"""
+        for port in range(start_port, start_port + max_tries):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.bind(('', port))
+                sock.close()
+                return port
+            except OSError:
+                continue
+        raise OSError("No available ports found")
+
+    def record_osm_metrics(
+        self,
+        response_time: float,
+        success: bool = True,
+        match_quality: Optional[float] = None,
+        match_type: str = "direct"
+    ):
+        """Record OSM API metrics"""
         try:
-            self.osm_response_time.observe(response_time)
-            status = "success" if success else "error"
-            self.osm_success_rate.labels(status=status).inc()
+            # Record latency
+            self.service_latency.labels(
+                service='osm',
+                endpoint='validate_location'
+            ).observe(response_time)
             
-            if match_quality is not None:
-                self.osm_match_quality.labels(match_type=match_type).observe(match_quality)
-                
-            self.logger.debug(f"Recorded OSM metrics - Time: {response_time}, Success: {success}, Type: {match_type}")
+            # Record request status
+            self.osm_requests.labels(
+                status='success' if success else 'failure'
+            ).inc()
+            
+            # Record validation result
+            if success:
+                self.validation_results.labels(
+                    result='valid',
+                    source=match_type
+                ).inc()
+            else:
+                self.validation_results.labels(
+                    result='invalid',
+                    source=match_type
+                ).inc()
+
         except Exception as e:
             self.logger.error(f"Error recording OSM metrics: {str(e)}")
 
-    def record_tour_generation(self, 
-                             location: str, 
-                             theme: str, 
-                             num_stops: int,
-                             response_quality: Optional[Dict[str, Any]] = None):
-        """Record metrics for a tour generation request"""
+    def record_cache_operation(
+        self,
+        operation: str,
+        success: bool,
+        response_time: Optional[float] = None
+    ):
+        """Record cache operation metrics"""
         try:
-            self.last_success_timestamp.set_to_current_time()
+            # Record operation status
+            self.cache_operations.labels(
+                operation=operation,
+                status='success' if success else 'failure'
+            ).inc()
             
-            self.logger.info(
-                f"Tour generation metrics - "
-                f"Location: {location}, "
-                f"Theme: {theme}, "
-                f"Stops: {num_stops}"
-            )
-            
-            if response_quality:
-                self.logger.debug(f"Quality metrics: {response_quality}")
-                
-        except Exception as e:
-            self.logger.error(f"Error recording tour metrics: {str(e)}")
+            # Record latency if provided
+            if response_time is not None:
+                self.service_latency.labels(
+                    service='cache',
+                    endpoint=operation
+                ).observe(response_time)
 
-    def record_error(self, error_type: str, details: str):
-        """Record error metrics"""
-        try:
-            # Use global error counter to avoid duplicates
-            error_counter.labels(error_type=error_type).inc()
-            self.logger.error(f"Error recorded - Type: {error_type}, Details: {details}")
         except Exception as e:
-            self.logger.error(f"Error recording error metrics: {str(e)}")
+            self.logger.error(f"Error recording cache metrics: {str(e)}")
+
+    def get_metrics(self):
+        """Get current metrics"""
+        return self.registry
+
+# Initialize singleton instance
+monitoring = MonitoringService()

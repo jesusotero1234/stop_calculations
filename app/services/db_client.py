@@ -46,17 +46,5 @@ class DBClient:
             raise Exception("Supabase client not initialized")
         return self._client
 
-    async def execute_query(self, query: str, *args, **kwargs) -> dict:
-        """Execute a raw SQL query"""
-        try:
-            result = await self.client.rpc(
-                'execute_sql',
-                {'query': query, 'params': args}
-            ).execute()
-            return result.data
-        except Exception as e:
-            logger.error(f"Query execution failed: {str(e)}")
-            raise
-
 # Initialize singleton instance
 db = DBClient.get_instance()

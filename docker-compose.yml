@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8001"  # FastAPI
+      - "9090:9090"  # Prometheus metrics
+    volumes:
+      - ./app:/app/app  # Mount the app directory for live reloading
+      - ./test_ollama.py:/app/test_ollama.py  # Mount Ollama test script
+      - ./test_llama.py:/app/test_llama.py  # Mount Llama test script
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Enable access to host machine
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=DEBUG  # Enable debug logging
+      - LLAMA_HOST=host.docker.internal  # Set Llama host
+      - LLAMA_PORT=11434  # Set Llama port
+    # Use uvicorn with --reload for development
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    healthcheck:
+      test: ["CMD", "python", "test_ollama.py"]  # Use our test script for health check
+      interval: 30s
+      timeout: 10s
+      retries: 3

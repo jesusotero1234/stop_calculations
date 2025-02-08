@@ -4,7 +4,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -21,25 +20,44 @@ wheels/
 .installed.cfg
 *.egg
 
-# Environment
-.env
-.venv
+# Virtual Environment
 venv/
 ENV/
+env/
+.env
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# Docker
-.docker/
-docker-compose.override.yml
+.DS_Store
 
 # Logs
 *.log
 logs/
+log/
 
-# Cache
-.cache/
+# Test coverage
+.coverage
+htmlcov/
+coverage.xml
+.pytest_cache/
+
+# Supabase
+.supabase/
+
+# Local development
+*.db
+*.sqlite3
+*.dump
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.bak

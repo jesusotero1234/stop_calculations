@@ -1,51 +1,68 @@
-from pydantic_settings import BaseSettings
-from pydantic import Field
-from typing import Dict, Any, List
-import json
+import os
+from dotenv import load_dotenv
+from typing import Dict, Any
 
-class Settings(BaseSettings):
-    # Llama Service Configuration
-    llama_host: str = Field(default="host.docker.internal", description="Llama host address")
-    llama_port: int = Field(default=11434, description="Llama port")
-    
-    # OpenStreetMap Configuration
-    osm_timeout: int = Field(default=10, description="Timeout in seconds")
-    name_match_threshold: float = Field(default=0.8, description="Minimum similarity ratio for name matching")
-    
-    # Tour Generation Settings
-    min_stops: int = Field(default=2, description="Minimum number of stops")
-    max_stops: int = Field(default=15, description="Maximum number of stops")
-    min_duration: int = Field(default=30, description="Minimum duration in minutes")
-    max_duration: int = Field(default=240, description="Maximum duration in minutes")
-    max_description_length: int = Field(default=500, description="Maximum description length in characters")
-    allowed_themes: List[str] = Field(default=["historical", "cultural"], description="Allowed tour themes")
-    
-    # Monitoring Configuration
-    monitoring_port: int = Field(default=9090, description="Prometheus metrics port")
-    log_level: str = Field(default="INFO", description="Logging level")
-    
-    # API Settings
-    api_port: int = Field(default=8001, description="API port")
-    api_host: str = Field(default="0.0.0.0", description="API host")
-    api_title: str = Field(default="Tour Generator", description="API title")
-    api_version: str = Field(default="2.0.0", description="API version")
+# Load environment variables
+load_dotenv()
 
-    @property
-    def llama_url(self) -> str:
-        """Get the full Llama URL"""
-        return f"http://{self.llama_host}:{self.llama_port}"
+# API Configuration
+API_CONFIG: Dict[str, Any] = {
+    "TITLE": os.getenv("API_TITLE", "Tour Generator"),
+    "VERSION": os.getenv("API_VERSION", "2.0.0"),
+    "HOST": os.getenv("API_HOST", "0.0.0.0"),
+    "PORT": int(os.getenv("API_PORT", "8001")),
+}
 
-    def dict(self, *args, **kwargs) -> Dict[str, Any]:
-        """Convert settings to dict, excluding None values"""
-        d = super().dict(*args, **kwargs)
-        return {k: v for k, v in d.items() if v is not None}
+# Service Configuration
+SERVICE_CONFIG: Dict[str, Any] = {
+    "MIN_STOPS": int(os.getenv("MIN_STOPS", "2")),
+    "MAX_STOPS": int(os.getenv("MAX_STOPS", "15")),
+    "MIN_DURATION": int(os.getenv("MIN_DURATION", "30")),
+    "MAX_DURATION": int(os.getenv("MAX_DURATION", "240")),
+    "MAX_DESCRIPTION_LENGTH": int(os.getenv("MAX_DESCRIPTION_LENGTH", "500")),
+}
 
-    def json(self, *args, **kwargs) -> str:
-        """Convert settings to JSON string"""
-        return json.dumps(self.dict(*args, **kwargs))
+# Database Configuration
+DB_CONFIG: Dict[str, str] = {
+    "SUPABASE_URL": os.getenv("SUPABASE_URL", ""),
+    "SUPABASE_KEY": os.getenv("SUPABASE_KEY", ""),
+    "SUPABASE_SERVICE_KEY": os.getenv("SUPABASE_SERVICE_KEY", ""),
+}
 
-    model_config = {
-        "env_file": ".env",
-        "case_sensitive": False,
-        "extra": "ignore",  # Ignore extra fields from .env file
-    }
+# OpenStreetMap Configuration
+OSM_CONFIG: Dict[str, Any] = {
+    "USER_AGENT": os.getenv("OSM_USER_AGENT", "TourGenerator/1.0"),
+    "RATE_LIMIT": float(os.getenv("OSM_RATE_LIMIT", "1.1")),
+}
+
+# Cache Configuration
+CACHE_CONFIG: Dict[str, int] = {
+    "TTL": int(os.getenv("CACHE_TTL", "2592000")),  # 30 days in seconds
+    "MIN_SUCCESS": int(os.getenv("CACHE_MIN_SUCCESS", "5")),
+}
+
+# LLama Configuration
+LLAMA_CONFIG: Dict[str, Any] = {
+    "HOST": os.getenv("LLAMA_HOST", "host.docker.internal"),
+    "PORT": int(os.getenv("LLAMA_PORT", "11434")),
+}
+
+# Monitoring Configuration
+MONITORING_CONFIG: Dict[str, Any] = {
+    "ENABLE": os.getenv("ENABLE_MONITORING", "true").lower() == "true",
+    "PORT": int(os.getenv("PROMETHEUS_PORT", "9090")),
+    "LOG_LEVEL": os.getenv("LOG_LEVEL", "DEBUG"),
+}
+
+# Environment
+ENV: str = os.getenv("ENV", "development")
+
+def validate_config() -> None:
+    """Validate required configuration is present"""
+    if not DB_CONFIG["SUPABASE_URL"]:
+        raise ValueError("SUPABASE_URL must be set")
+    if not DB_CONFIG["SUPABASE_KEY"]:
+        raise ValueError("SUPABASE_KEY must be set")
+
+# Validate configuration on import
+validate_config()

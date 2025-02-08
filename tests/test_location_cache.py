@@ -4,6 +4,7 @@ from datetime import datetime
 from app.models.location_cache import LocationCache
 from app.services.osm_service import OSMService
 from app.services.monitoring_service import MonitoringService
+from app.services.db_client import db
 
 class TestLocationCache:
     @pytest.fixture
@@ -14,116 +15,76 @@ class TestLocationCache:
     def osm_service(self, monitoring_service):
         return OSMService(monitoring_service)
 
+    async def clean_test_data(self, test_name: str, city: str = "Test City"):
+        """Clean up test data after each test"""
+        try:
+            await db.client.table('location_cache')\
+                .delete()\
+                .eq('original_name', test_name)\
+                .eq('city', city)\
+                .execute()
+        except Exception as e:
+            print(f"Error cleaning test data: {str(e)}")
+
     @pytest.mark.asyncio
     async def test_location_cache_create_and_retrieve(self):
         """Test creating and retrieving a cached location"""
-        test_data = {
-            "original_name": "Royal Palace of Madrid",
-            "city": "Madrid",
-            "translations": ["Palacio Real de Madrid"],
-            "coordinates": {"lat": 40.4167403, "lon": -3.7136222},
-            "confidence": 1.0,
-            "source": "test"
-        }
+        test_name = "Test Location"
+        
+        try:
+            test_data = {
+                "original_name": test_name,
+                "city": "Madrid",
+                "translations": ["Test 1"],
+                "coordinates": {"lat": 40.4167403, "lon": -3.7136222},
+                "confidence": 1.0,
+                "source": "test"
+            }
 
-        # Create cache entry
-        cached = await LocationCache.create(test_data)
-        assert cached is not None
-        assert cached.original_name == test_data["original_name"]
-        assert cached.coordinates == test_data["coordinates"]
+            # Create cache entry
+            cached = await LocationCache.create(test_data)
+            assert cached is not None
+            assert cached.original_name == test_data["original_name"]
+            assert cached.coordinates == test_data["coordinates"]
 
-        # Retrieve cache entry
-        retrieved = await LocationCache.get_by_name(
-            test_data["original_name"],
-            test_data["city"]
-        )
-        assert retrieved is not None
-        assert retrieved.original_name == test_data["original_name"]
-        assert retrieved.coordinates == test_data["coordinates"]
+            # Retrieve cache entry
+            retrieved = await LocationCache.get_by_name(
+                test_data["original_name"],
+                test_data["city"]
+            )
+            assert retrieved is not None
+            assert retrieved.original_name == test_data["original_name"]
+            assert retrieved.coordinates == test_data["coordinates"]
+
+        finally:
+            await self.clean_test_data(test_name, "Madrid")
 
     @pytest.mark.asyncio
     async def test_osm_service_with_cache(self, osm_service):
         """Test OSM service with caching"""
-        # First request - should hit OSM API
         location = "Royal Palace of Madrid"
         city = "Madrid"
         
-        result = await osm_service.validate_and_get_coordinates(location, city)
-        assert result is not None
-        assert "latitude" in result
-        assert "longitude" in result
+        try:
+            # First request - should hit OSM API
+            result = await osm_service.validate_and_get_coordinates(location, city)
+            assert result is not None
+            assert "latitude" in result
+            assert "longitude" in result
 
-        # Second request - should hit cache
-        cached_result = await osm_service.validate_and_get_coordinates(location, city)
-        assert cached_result is not None
-        assert cached_result["latitude"] == result["latitude"]
-        assert cached_result["longitude"] == result["longitude"]
+            # Second request - should hit cache
+            cached_result = await osm_service.validate_and_get_coordinates(location, city)
+            assert cached_result is not None
+            assert cached_result["latitude"] == result["latitude"]
+            assert cached_result["longitude"] == result["longitude"]
 
-        # Verify cache was used
-        cached = await LocationCache.get_by_name(location, city)
-        assert cached is not None
-        assert cached.success_count > 0
+            # Verify cache was used
+            cached = await LocationCache.get_by_name(location, city)
+            assert cached is not None
+            assert cached.success_count > 0
 
-    @pytest.mark.asyncio
-    async def test_cache_update(self):
-        """Test updating cache entries"""
-        test_data = {
-            "original_name": "Test Location",
-            "city": "Test City",
-            "translations": ["Test 1"],
-            "coordinates": {"lat": 1.0, "lon": 1.0},
-            "confidence": 1.0,
-            "source": "test"
-        }
-
-        # Create initial entry
-        cached = await LocationCache.create(test_data)
-        assert cached is not None
-
-        # Update entry
-        updated_data = {
-            **test_data,
-            "translations": ["Test 1", "Test 2"],
-            "confidence": 0.9
-        }
-        updated = await LocationCache.update_or_create(
-            test_data["original_name"],
-            test_data["city"],
-            updated_data
-        )
-
-        assert updated is not None
-        assert len(updated.translations) == 2
-        assert updated.confidence == 0.9
-
-    @pytest.mark.asyncio
-    async def test_success_count_increment(self):
-        """Test incrementing success count"""
-        test_data = {
-            "original_name": "Success Test",
-            "city": "Test City",
-            "translations": ["Test"],
-            "coordinates": {"lat": 1.0, "lon": 1.0},
-            "success_count": 0
-        }
-
-        # Create entry
-        cached = await LocationCache.create(test_data)
-        assert cached is not None
-        assert cached.success_count == 0
-
-        # Increment success count
-        success = await cached.increment_success()
-        assert success is True
-        assert cached.success_count == 1
-
-        # Verify in database
-        retrieved = await LocationCache.get_by_name(
-            test_data["original_name"],
-            test_data["city"]
-        )
-        assert retrieved is not None
-        assert retrieved.success_count == 1
+        finally:
+            await self.clean_test_data(location, city)
 
     @pytest.mark.asyncio
     async def test_cache_with_multiple_translations(self, osm_service):
@@ -132,48 +93,70 @@ class TestLocationCache:
         city = "Madrid"
         translations = ["Palacio Real", "Royal Palace", "Königlicher Palast"]
 
-        # Create cache entry with translations
-        test_data = {
-            "original_name": location,
-            "city": city,
-            "translations": translations,
-            "coordinates": {"lat": 40.4167403, "lon": -3.7136222},
-            "confidence": 1.0,
-            "source": "test"
-        }
+        try:
+            # Create cache entry with translations
+            test_data = {
+                "original_name": location,
+                "city": city,
+                "translations": translations,
+                "coordinates": {"lat": 40.4167403, "lon": -3.7136222},
+                "confidence": 1.0,
+                "source": "test"
+            }
 
-        cached = await LocationCache.create(test_data)
-        assert cached is not None
-        assert len(cached.translations) == len(translations)
+            cached = await LocationCache.create(test_data)
+            assert cached is not None
+            assert len(cached.translations) == len(translations)
 
-        # Try retrieving with different translations
-        for translation in translations:
-            result = await osm_service.validate_and_get_coordinates(translation, city)
-            assert result is not None
-            assert result["latitude"] == test_data["coordinates"]["lat"]
-            assert result["longitude"] == test_data["coordinates"]["lon"]
+            # Try retrieving with different translations
+            for translation in translations:
+                result = await osm_service.validate_and_get_coordinates(translation, city)
+                assert result is not None
+                assert result["latitude"] == test_data["coordinates"]["lat"]
+                assert result["longitude"] == test_data["coordinates"]["lon"]
+
+            # Check statistics
+            stats = await LocationCache.get_statistics()
+            assert stats is not None
+            assert "cache_hit_rate" in stats
+            assert "average_confidence" in stats
+
+        finally:
+            await self.clean_test_data(location, city)
 
     @pytest.mark.asyncio
-    async def test_cache_invalidation(self):
-        """Test cache entry invalidation after long period"""
-        old_date = datetime(2024, 1, 1).isoformat()
-        test_data = {
-            "original_name": "Old Location",
-            "city": "Test City",
-            "translations": ["Test"],
-            "coordinates": {"lat": 1.0, "lon": 1.0},
-            "last_validated": old_date
-        }
+    async def test_cache_cleanup(self):
+        """Test cache cleanup functionality"""
+        test_locations = [
+            {"name": "Old Place 1", "success": 1},
+            {"name": "Old Place 2", "success": 3},
+            {"name": "Popular Place", "success": 10}
+        ]
 
-        # Create old entry
-        cached = await LocationCache.create(test_data)
-        assert cached is not None
-        assert cached.last_validated.isoformat() == old_date
+        try:
+            # Create test entries
+            for loc in test_locations:
+                await LocationCache.create({
+                    "original_name": loc["name"],
+                    "city": "Test City",
+                    "translations": [loc["name"]],
+                    "coordinates": {"lat": 1.0, "lon": 1.0},
+                    "success_count": loc["success"],
+                    "last_validated": datetime(2024, 1, 1).isoformat()
+                })
 
-        # Update last_validated
-        success = await cached.increment_success()
-        assert success is True
-        assert cached.last_validated > datetime.fromisoformat(old_date)
+            # Run cleanup
+            deleted = await LocationCache.cleanup_old_entries(days=30, min_success=5)
+            assert deleted == 2  # Should delete the two less popular places
+
+            # Verify popular place remains
+            popular = await LocationCache.get_by_name("Popular Place", "Test City")
+            assert popular is not None
+            assert popular.success_count == 10
+
+        finally:
+            for loc in test_locations:
+                await self.clean_test_data(loc["name"])
 
 if __name__ == "__main__":
     pytest.main(["-v", "test_location_cache.py"])

@@ -1,8 +1,10 @@
 from typing import Dict, Optional, List
 from datetime import datetime
-import json
+import logging
 from dataclasses import dataclass, asdict
-from app.services.supabase_client import supabase
+from app.services.db_client import db
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class LocationCache:
@@ -25,7 +27,7 @@ class LocationCache:
     async def get_by_name(cls, name: str, city: str) -> Optional['LocationCache']:
         """Retrieve a location from cache by name and city"""
         try:
-            result = await supabase.table('location_cache')\
+            result = await db.client.table('location_cache')\
                 .select('*')\
                 .eq('original_name', name)\
                 .eq('city', city)\
@@ -35,23 +37,25 @@ class LocationCache:
             if result.data:
                 return cls(**result.data)
             return None
+
         except Exception as e:
-            print(f"Error retrieving from cache: {str(e)}")
+            logger.error(f"Error retrieving from cache: {str(e)}")
             return None
 
     @classmethod
     async def create(cls, data: Dict) -> Optional['LocationCache']:
         """Create a new cached location"""
         try:
-            result = await supabase.table('location_cache')\
+            result = await db.client.table('location_cache')\
                 .insert(data)\
                 .execute()
             
             if result.data:
                 return cls(**result.data[0])
             return None
+
         except Exception as e:
-            print(f"Error creating cache entry: {str(e)}")
+            logger.error(f"Error creating cache entry: {str(e)}")
             return None
 
     async def increment_success(self) -> bool:
@@ -60,7 +64,7 @@ class LocationCache:
             if not self.id:
                 return False
             
-            result = await supabase.table('location_cache')\
+            result = await db.client.table('location_cache')\
                 .update({
                     'success_count': self.success_count + 1,
                     'last_validated': datetime.utcnow().isoformat()
@@ -73,8 +77,9 @@ class LocationCache:
                 self.last_validated = datetime.utcnow()
                 return True
             return False
+
         except Exception as e:
-            print(f"Error incrementing success count: {str(e)}")
+            logger.error(f"Error incrementing success count: {str(e)}")
             return False
 
     def to_dict(self) -> Dict:
@@ -87,13 +92,46 @@ class LocationCache:
         try:
             existing = await cls.get_by_name(name, city)
             if existing:
-                result = await supabase.table('location_cache')\
+                result = await db.client.table('location_cache')\
                     .update({**data, 'updated_at': datetime.utcnow().isoformat()})\
                     .eq('id', existing.id)\
                     .execute()
                 return cls(**result.data[0]) if result.data else None
             else:
                 return await cls.create({**data, 'original_name': name, 'city': city})
+
         except Exception as e:
-            print(f"Error updating/creating cache entry: {str(e)}")
+            logger.error(f"Error updating/creating cache entry: {str(e)}")
             return None
+
+    @classmethod
+    async def cleanup_old_entries(cls, days: int = 30, min_success: int = 5) -> int:
+        """Clean up old cache entries"""
+        try:
+            cutoff_date = (datetime.utcnow() - datetime.timedelta(days=days)).isoformat()
+            result = await db.client.table('location_cache')\
+                .delete()\
+                .lt('last_validated', cutoff_date)\
+                .lt('success_count', min_success)\
+                .execute()
+            
+            return len(result.data) if result.data else 0
+
+        except Exception as e:
+            logger.error(f"Error cleaning up old entries: {str(e)}")
+            return 0
+
+    @classmethod
+    async def get_statistics(cls) -> Dict:
+        """Get cache statistics"""
+        try:
+            result = await db.client.rpc(
+                'get_cache_statistics',
+                {}
+            ).execute()
+            
+            return result.data[0] if result.data else {}
+
+        except Exception as e:
+            logger.error(f"Error getting cache statistics: {str(e)}")
+            return {}

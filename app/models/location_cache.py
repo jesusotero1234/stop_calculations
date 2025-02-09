@@ -1,5 +1,5 @@
-from typing import Dict, Optional, List
-from datetime import datetime
+from typing import Dict, Optional, List, Tuple
+from datetime import datetime, timedelta
 import logging
 from dataclasses import dataclass, asdict
 from app.services.db_client import db
@@ -24,6 +24,43 @@ class LocationCache:
     updated_at: Optional[datetime] = None
 
     @classmethod
+    async def find_by_variants(cls, name: str, city: str) -> Optional['LocationCache']:
+        """Find location by original name or translations"""
+        try:
+            # Try exact match first
+            result = await cls.get_by_name(name, city)
+            if result:
+                return result
+
+            # Try case-insensitive match
+            result = await db.client.from_('location_cache')\
+                .select('*')\
+                .eq('city', city)\
+                .filter('lower(original_name)', 'eq', name.lower())\
+                .single()\
+                .execute()
+
+            if result.data:
+                return cls(**result.data)
+
+            # Try translations
+            result = await db.client.from_('location_cache')\
+                .select('*')\
+                .eq('city', city)\
+                .contains('translations', [name])\
+                .single()\
+                .execute()
+
+            if result.data:
+                return cls(**result.data)
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error searching location variants: {str(e)}")
+            return None
+
+    @classmethod
     async def get_by_name(cls, name: str, city: str) -> Optional['LocationCache']:
         """Retrieve a location from cache by name and city"""
         try:
@@ -46,6 +83,12 @@ class LocationCache:
     async def create(cls, data: Dict) -> Optional['LocationCache']:
         """Create a new cached location"""
         try:
+            # Ensure translations is a list and includes original name
+            if 'translations' not in data:
+                data['translations'] = []
+            if data['original_name'] not in data['translations']:
+                data['translations'].append(data['original_name'])
+
             result = await db.client.from_('location_cache')\
                 .insert(data)\
                 .execute()
@@ -58,6 +101,24 @@ class LocationCache:
             logger.error(f"Error creating cache entry: {str(e)}")
             return None
 
+    async def add_translation(self, translation: str) -> bool:
+        """Add a new translation for this location"""
+        try:
+            if not self.id or translation in self.translations:
+                return False
+
+            self.translations.append(translation)
+            result = await db.client.from_('location_cache')\
+                .update({'translations': self.translations})\
+                .eq('id', self.id)\
+                .execute()
+
+            return bool(result.data)
+
+        except Exception as e:
+            logger.error(f"Error adding translation: {str(e)}")
+            return False
+
     async def increment_success(self) -> bool:
         """Increment the success count for this location"""
         try:
@@ -67,7 +128,8 @@ class LocationCache:
             result = await db.client.from_('location_cache')\
                 .update({
                     'success_count': self.success_count + 1,
-                    'last_validated': datetime.utcnow().isoformat()
+                    'last_validated': datetime.utcnow().isoformat(),
+                    'confidence': min(1.0, self.confidence + 0.1)
                 })\
                 .eq('id', self.id)\
                 .execute()
@@ -75,6 +137,7 @@ class LocationCache:
             if result.data:
                 self.success_count += 1
                 self.last_validated = datetime.utcnow()
+                self.confidence = min(1.0, self.confidence + 0.1)
                 return True
             return False
 
@@ -92,6 +155,11 @@ class LocationCache:
         try:
             existing = await cls.get_by_name(name, city)
             if existing:
+                # Merge translations
+                if 'translations' in data:
+                    translations = list(set(existing.translations + data['translations']))
+                    data['translations'] = translations
+
                 result = await db.client.from_('location_cache')\
                     .update({**data, 'updated_at': datetime.utcnow().isoformat()})\
                     .eq('id', existing.id)\
@@ -108,9 +176,10 @@ class LocationCache:
     async def cleanup_old_entries(cls, days: int = 30, min_success: int = 5) -> int:
         """Clean up old cache entries"""
         try:
+            cutoff_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
             result = await db.client.from_('location_cache')\
                 .delete()\
-                .lt('last_validated', (datetime.utcnow() - datetime.timedelta(days=days)).isoformat())\
+                .lt('last_validated', cutoff_date)\
                 .lt('success_count', min_success)\
                 .execute()
             
@@ -119,3 +188,30 @@ class LocationCache:
         except Exception as e:
             logger.error(f"Error cleaning up old entries: {str(e)}")
             return 0
+
+    @classmethod
+    async def get_stats(cls) -> Dict:
+        """Get cache statistics"""
+        try:
+            total = await db.client.from_('location_cache')\
+                .select('id', 'count')\
+                .execute()
+            
+            successful = await db.client.from_('location_cache')\
+                .select('id', 'count')\
+                .gt('success_count', 0)\
+                .execute()
+
+            avg_confidence = await db.client.from_('location_cache')\
+                .select('confidence')\
+                .execute()
+
+            return {
+                'total_entries': len(total.data) if total.data else 0,
+                'successful_entries': len(successful.data) if successful.data else 0,
+                'average_confidence': sum(r['confidence'] for r in avg_confidence.data) / len(avg_confidence.data) if avg_confidence.data else 0
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting cache statistics: {str(e)}")
+            return {}

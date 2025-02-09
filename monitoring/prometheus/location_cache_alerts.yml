@@ -1,0 +1,123 @@
+groups:
+- name: location_cache_alerts
+  rules:
+  # Performance Alerts
+  - alert: HighCacheMissRate
+    expr: |
+      (
+        rate(location_cache_misses_total[5m]) /
+        (rate(location_cache_hits_total[5m]) + rate(location_cache_misses_total[5m]))
+      ) > 0.3
+    for: 5m
+    labels:
+      severity: warning
+      service: location_cache
+    annotations:
+      summary: High cache miss rate (> 30%)
+      description: Cache miss rate is {{ $value | printf "%.2f" }}%
+      dashboard: https://grafana/d/location-cache
+
+  - alert: SlowCacheResponse
+    expr: |
+      histogram_quantile(0.95,
+        rate(service_request_latency_seconds_bucket{cache_status="hit"}[5m])
+      ) > 0.5
+    for: 5m
+    labels:
+      severity: warning
+      service: location_cache
+    annotations:
+      summary: Slow cache response times
+      description: 95th percentile cache response time is {{ $value | printf "%.2f" }}s
+
+  # Cache Health Alerts
+  - alert: CacheGrowthSpike
+    expr: |
+      (
+        sum(location_cache_entries) - 
+        sum(location_cache_entries offset 1h)
+      ) / sum(location_cache_entries offset 1h) > 0.2
+    for: 15m
+    labels:
+      severity: warning
+      service: location_cache
+    annotations:
+      summary: Unusual cache growth (>20% in 1h)
+      description: Cache size increased by {{ $value | printf "%.2f" }}%
+
+  - alert: LowConfidenceEntries
+    expr: |
+      avg(location_match_confidence) < 0.7
+    for: 30m
+    labels:
+      severity: warning
+      service: location_cache
+    annotations:
+      summary: Low average confidence scores
+      description: Average confidence score is {{ $value | printf "%.2f" }}
+
+  # Translation Alerts
+  - alert: TranslationFailureRate
+    expr: |
+      rate(location_translations_failed_total[15m]) /
+      rate(location_translations_attempted_total[15m]) > 0.1
+    for: 15m
+    labels:
+      severity: warning
+      service: location_cache
+    annotations:
+      summary: High translation failure rate (>10%)
+      description: Translation failure rate is {{ $value | printf "%.2f" }}%
+
+  # System Alerts
+  - alert: CacheCleanupFailure
+    expr: time() - max(cache_cleanup_timestamp) > 86400
+    for: 1h
+    labels:
+      severity: warning
+      service: location_cache
+    annotations:
+      summary: Cache cleanup hasn't run in 24h
+      description: Last cleanup was {{ $value | printf "%.0f" }} seconds ago
+
+  # API Integration Alerts
+  - alert: OSMApiErrors
+    expr: |
+      rate(osm_requests_total{status="error"}[5m]) /
+      rate(osm_requests_total[5m]) > 0.05
+    for: 5m
+    labels:
+      severity: critical
+      service: location_cache
+    annotations:
+      summary: High OSM API error rate (>5%)
+      description: OSM API error rate is {{ $value | printf "%.2f" }}%
+
+  # Resource Usage Alerts
+  - alert: CacheMemoryHigh
+    expr: sum(location_cache_entries) > 1000000
+    for: 15m
+    labels:
+      severity: warning
+      service: location_cache
+    annotations:
+      summary: Cache size exceeds 1M entries
+      description: Current cache size is {{ $value }} entries
+
+recording_rules:
+  - record: location_cache:hit_rate_5m
+    expr: |
+      rate(location_cache_hits_total[5m]) /
+      (rate(location_cache_hits_total[5m]) + rate(location_cache_misses_total[5m]))
+
+  - record: location_cache:avg_latency_5m
+    expr: |
+      rate(service_request_latency_seconds_sum[5m]) /
+      rate(service_request_latency_seconds_count[5m])
+
+  - record: location_cache:translation_success_rate_15m
+    expr: |
+      1 - (
+        rate(location_translations_failed_total[15m]) /
+        rate(location_translations_attempted_total[15m])
+      )
